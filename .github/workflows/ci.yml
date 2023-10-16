@@ -326,6 +326,60 @@ jobs:
           DEBUG_RESOURCES: ${{needs.build-info.outputs.debug-resources}}
           BUILD_TIMEOUT_MINUTES: 70
 
+  preview-constraints:
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    continue-on-error: true
+    name: >
+      Preview constraints
+      ${{needs.build-info.outputs.all-python-versions-list-as-string}}
+    runs-on: "${{needs.build-info.outputs.runs-on}}"
+    needs: [build-info, build-ci-images]
+    if: needs.build-info.outputs.upgrade-to-newer-dependencies != 'false'
+    env:
+      RUNS_ON: "${{ needs.build-info.outputs.runs-on }}"
+      PYTHON_VERSIONS: ${{needs.build-info.outputs.all-python-versions-list-as-string}}
+    steps:
+      - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+      - name: >
+          Prepare breeze & CI image: ${{needs.build-info.outputs.default-python-version}}:${{env.IMAGE_TAG}}
+        uses: ./.github/actions/prepare_breeze_and_image
+      - name: "Source constraints"
+        shell: bash
+        run: >
+          breeze release-management generate-constraints --run-in-parallel
+          --airflow-constraints-mode constraints-source-providers || true
+        env:
+          DEBUG_RESOURCES: ${{needs.build-info.outputs.debug-resources}}
+      - name: "PyPI constraints"
+        shell: bash
+        timeout-minutes: 10
+        run: >
+          breeze release-management generate-constraints --run-in-parallel
+          --airflow-constraints-mode constraints || true
+        env:
+          DEBUG_RESOURCES: ${{needs.build-info.outputs.debug-resources}}
+      - name: "Dependency upgrade summary"
+        shell: bash
+        run: |
+          for PYTHON_VERSION in ${{ env.PYTHON_VERSIONS }}; do
+            echo "Summarizing Python $PYTHON_VERSION"
+            cat "files/constraints-${PYTHON_VERSION}/*.md" >> $GITHUB_STEP_SUMMARY || true
+          done
+      - name: "Upload constraint artifacts"
+        uses: actions/upload-artifact@v3
+        with:
+          name: constraints
+          path: ./files/constraints-*/constraints-*.txt
+          retention-days: 7
+      - name: "Fix ownership"
+        run: breeze ci fix-ownership
+        if: always()
+
   build-prod-images:
     timeout-minutes: 80
     name: >
@@ -1683,8 +1737,8 @@ jobs:
               --airflow-constraints-mode constraints-source-providers
           breeze release-management generate-constraints \
               --run-in-parallel --airflow-constraints-mode constraints-no-providers
-#          breeze release-management generate-constraints \
-#              --run-in-parallel --airflow-constraints-mode constraints
+          breeze release-management generate-constraints \
+              --run-in-parallel --airflow-constraints-mode constraints
         env:
           PYTHON_VERSIONS: ${{ needs.build-info.outputs.python-versions-list-as-string }}
       - name: "Set constraints branch name"
